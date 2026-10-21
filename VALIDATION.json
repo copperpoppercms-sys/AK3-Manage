@@ -1,0 +1,13 @@
+{
+  "name": "A3K Bastion",
+  "version": "1.0.0",
+  "offline_tests": 34,
+  "offline_result": "passed",
+  "generated_lua_compile_checks": 4,
+  "discord_access": "exact configured OWNER_ID on commands and buttons",
+  "http_flow": "tested on local aiohttp server: bootstrap, authentication, single-use payload delivery, replay denial",
+  "discord_login": "not tested; credentials not configured",
+  "deployed": false,
+  "real_roblox_rendering": "not tested",
+  "vm_obfuscator": false
+}
