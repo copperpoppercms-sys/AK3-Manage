@@ -102,7 +102,7 @@ class OwnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_expected_commands_are_registered(self):
         self.assertEqual({cmd.name for cmd in self.bot.tree.get_commands()},
-            {'panel','scripts','upload','customize','issue','keys','revoke','reset_device','enable','loader','activity'})
+            {'panel','scripts','upload','obfuscate','protect','customize','issue','keys','revoke','reset_device','enable','loader','activity'})
 
     async def test_missing_owner_never_defaults_to_public_access(self):
         with self.assertRaises(ValueError): Bastion(None,self.store,'https://bastion.example')

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from .obfuscate import MAX_OUTPUT, PROTECTION, Protected
 
 MAX_SOURCE = 1024 * 1024
 
@@ -48,6 +49,11 @@ class Store:
           id INTEGER PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL,
           script_id TEXT, key_id TEXT);
         ''')
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(scripts)")}
+        if "protection" not in columns:
+            self.db.execute("ALTER TABLE scripts ADD COLUMN protection TEXT NOT NULL DEFAULT 'none'")
+        if "original_size" not in columns:
+            self.db.execute("ALTER TABLE scripts ADD COLUMN original_size INTEGER")
         verifier = self.digest("configuration", "master-secret-check")
         row = self.db.execute("SELECT value FROM settings WHERE name='secret_check'").fetchone()
         if row and not hmac.compare_digest(row[0], verifier):
@@ -66,14 +72,20 @@ class Store:
                         (int(self.clock()), kind, script_id, key_id))
         self.db.execute("DELETE FROM activity WHERE id <= (SELECT COALESCE(MAX(id),0)-1000 FROM activity)")
 
-    def upload(self, name, source):
+    def upload(self, name, source, *, protection="none", original_size=None):
         name = self.clean_name(name)
-        if not source or len(source) > MAX_SOURCE or b"\0" in source:
+        if protection not in ("none", PROTECTION):
+            raise ValueError("Unknown protection format.")
+        limit = MAX_SOURCE if protection == "none" else MAX_OUTPUT
+        if not source or len(source) > limit or b"\0" in source:
             raise ValueError("Upload a text Lua/Luau script between 1 byte and 1 MB.")
+        original_size = len(source) if original_size is None else original_size
+        if type(original_size) is not int or not 1 <= original_size <= MAX_SOURCE:
+            raise ValueError("Original scripts must be between 1 byte and 1 MB.")
         source.decode("utf-8")
         script_id = secrets.token_hex(8)
-        self.db.execute("INSERT INTO scripts(id,name,accent,payload,sha256,size,updated) VALUES(?,?,?,?,?,?,?)",
-                        (script_id, name, "#34D399", self.cipher.encrypt(source), hashlib.sha256(source).hexdigest(), len(source), int(self.clock())))
+        self.db.execute("INSERT INTO scripts(id,name,accent,payload,sha256,size,updated,protection,original_size) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (script_id, name, "#34D399", self.cipher.encrypt(source), hashlib.sha256(source).hexdigest(), len(source), int(self.clock()), protection, original_size))
         self.event("script-uploaded", script_id)
         return script_id
 
@@ -85,13 +97,37 @@ class Store:
         return name
 
     def script(self, script_id, enabled=False):
-        row = self.db.execute("SELECT id,name,accent,sha256,size,enabled,updated FROM scripts WHERE id=?", (script_id,)).fetchone()
+        row = self.db.execute("SELECT id,name,accent,sha256,size,enabled,updated,protection,COALESCE(original_size,size) AS original_size FROM scripts WHERE id=?", (script_id,)).fetchone()
         if not row or enabled and not row["enabled"]:
             raise AccessDenied("Script unavailable.")
         return dict(row)
 
     def scripts(self):
-        return [dict(row) for row in self.db.execute("SELECT id,name,size,enabled,updated FROM scripts ORDER BY updated DESC LIMIT 100")]
+        return [dict(row) for row in self.db.execute("SELECT id,name,size,enabled,updated,protection FROM scripts ORDER BY updated DESC LIMIT 100")]
+
+    def source_for_protection(self, script_id):
+        info = self.script(script_id)
+        if info["protection"] != "none":
+            raise ValueError("This script is already protected.")
+        row = self.db.execute("SELECT payload FROM scripts WHERE id=?", (script_id,)).fetchone()
+        return self.cipher.decrypt(row[0])
+
+    def apply_protection(self, script_id, result):
+        if not isinstance(result, Protected) or len(result.source) > MAX_OUTPUT:
+            raise ValueError("Invalid protected output.")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            info = self.script(script_id)
+            if info["protection"] != "none" or info["sha256"] != result.original_sha256:
+                raise ValueError("The stored script changed during protection. Run /protect again.")
+            self.db.execute("UPDATE scripts SET payload=?,sha256=?,size=?,updated=?,protection=?,original_size=? WHERE id=?",
+                            (self.cipher.encrypt(result.source),hashlib.sha256(result.source).hexdigest(),len(result.source),int(self.clock()),result.protection,result.original_size,script_id))
+            self.db.execute("DELETE FROM grants WHERE script_id=?",(script_id,))
+            self.event("script-protected",script_id)
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
 
     def customize(self, script_id, name, accent):
         self.script(script_id)

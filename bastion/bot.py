@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import discord
@@ -6,6 +7,7 @@ from discord import app_commands
 from . import VERSION
 from .loader import short_loader
 from .store import AccessDenied, MAX_SOURCE
+from .obfuscate import protect
 
 BRAND = 0x34D399
 
@@ -55,6 +57,8 @@ class OwnerPanel(discord.ui.View):
 
 GUIDE = """**Start a hub**
 `/upload` — upload a Lua or Luau file.
+`/obfuscate` — download an obfuscated copy without creating a hub.
+`/protect` — obfuscate an existing unprotected script, keeping its keys.
 `/customize` — set your hub name and accent color.
 `/loader` — get the loader and key-screen script.
 
@@ -83,7 +87,7 @@ async def show_scripts(interaction, store):
     if not rows:
         await interaction.response.send_message(embed=embed("Your first hub", "Use `/upload` to add a Lua or Luau file. Your script ID will appear here."), ephemeral=True)
         return
-    text = "\n".join(f"{row['id']} | {row['name']} | {'enabled' if row['enabled'] else 'paused'} | {row['size']} bytes" for row in rows)
+    text = "\n".join(f"{row['id']} | {row['name']} | {'enabled' if row['enabled'] else 'paused'} | {row['protection']} | {row['size']} bytes" for row in rows)
     await send_text(interaction, text, "bastion-scripts.txt")
 
 
@@ -126,18 +130,43 @@ class Bastion(discord.Client):
             await show_scripts(interaction, self.store)
 
         @self.tree.command(name="upload", description="Upload a Lua or Luau script to a new hub")
-        async def upload(interaction: discord.Interaction, name: str, file: discord.Attachment):
+        async def upload(interaction: discord.Interaction, name: str, file: discord.Attachment, obfuscate: bool = True):
             if file.size > MAX_SOURCE or not file.filename.lower().endswith((".lua", ".luau")):
                 await interaction.response.send_message("Upload a .lua or .luau file no larger than 1 MB.", ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 source = await file.read()
-                script_id = self.store.upload(name, source)
-                value = embed("Hub created", f"Script ID: `{script_id}`\n\nUse `/customize` to style the key screen, `/issue` to create access keys, and `/loader` to get the loader.")
+                if obfuscate:
+                    result = await asyncio.to_thread(protect, source)
+                    script_id = self.store.upload(name, result.source, protection=result.protection, original_size=result.original_size)
+                    detail = f"Source obfuscation enabled: {result.renamed} locals renamed, {result.encoded_strings} strings encoded."
+                else:
+                    script_id = self.store.upload(name, source)
+                    detail = "Source obfuscation disabled."
+                value = embed("Hub created", f"Script ID: `{script_id}`\n{detail}\n\nUse `/customize` to style the key screen, `/issue` to create access keys, and `/loader` to get the loader.")
                 await interaction.followup.send(embed=value, ephemeral=True)
             except (ValueError, UnicodeError) as exc:
                 await interaction.followup.send(str(exc) if not isinstance(exc, UnicodeError) else "The file must be UTF-8 text.", ephemeral=True)
+
+        @self.tree.command(name="obfuscate", description="Obfuscate a Lua/Luau file and privately download the result")
+        async def obfuscate_file(interaction: discord.Interaction, file: discord.Attachment):
+            if file.size > MAX_SOURCE or not file.filename.lower().endswith((".lua", ".luau")):
+                await interaction.response.send_message("Upload a .lua or .luau file no larger than 1 MB.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            result = await asyncio.to_thread(protect, await file.read())
+            await interaction.followup.send(
+                content=f"Source obfuscation complete: {result.renamed} locals renamed; {result.encoded_strings} strings encoded. This is source protection, not a VM.",
+                file=discord.File(io.BytesIO(result.source),filename="bastion-protected.lua"),ephemeral=True)
+
+        @self.tree.command(name="protect", description="Obfuscate an existing script while preserving its ID and keys")
+        async def protect_existing(interaction: discord.Interaction, script_id: str):
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            source = self.store.source_for_protection(script_id)
+            result = await asyncio.to_thread(protect, source)
+            self.store.apply_protection(script_id,result)
+            await interaction.followup.send("Source obfuscation enabled. Your script ID, loader and issued keys stay the same. Pending downloads were cancelled; run the loader again.",ephemeral=True)
 
         @self.tree.command(name="customize", description="Set the name and accent for a script's key screen")
         async def customize(interaction: discord.Interaction, script_id: str, name: str, accent: str = "#34D399"):

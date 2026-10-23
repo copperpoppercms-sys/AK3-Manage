@@ -5,6 +5,10 @@ Create timed access keys, customize a key screen, export loaders, bind keys to a
 client-reported device ID, and revoke future access. The bot and access API run
 as one application. There is no KeyForge connection, code, account, or API.
 
+New uploads now use built-in **source obfuscation** by default: local-variable
+renaming with lexical scope tracking, comment/formatting removal, and encoded
+string literals. This is not VM virtualization or unbreakable protection.
+
 ## What is private
 
 Every Discord command and panel button checks **your exact Discord user ID**.
@@ -27,7 +31,9 @@ For a private workspace, invite the bot only to your own server.
 | Command | What it does |
 | --- | --- |
 | `/panel` | Private control panel with buttons |
-| `/upload name file` | Add a UTF-8 .lua or .luau script, up to 1 MB |
+| `/upload name file obfuscate` | Add a UTF-8 .lua or .luau script, up to 1 MB; obfuscation defaults to true |
+| `/obfuscate file` | Privately download an obfuscated copy without creating a hub |
+| `/protect script_id` | Obfuscate an existing raw hub without changing its ID, loader or keys |
 | `/scripts` | List script IDs and status |
 | `/customize script_id name accent` | Set the hub name and hex accent color |
 | `/issue script_id hours amount label` | Generate 1–25 keys, valid for 1–8760 hours |
@@ -42,6 +48,45 @@ New keys bind to their first client-reported device ID. Expiry starts **when you
 issue the key**, rather than when it is first redeemed. Raw keys are shown once
 in a private file; only keyed hashes are kept in the database. A forgotten raw
 key cannot be recovered: revoke its key ID and issue another.
+
+## Obfuscation
+
+After deploying this update, use `/obfuscate` with an attachment to get a
+`bastion-protected.lua` file. `/upload` automatically obfuscates new scripts;
+select `obfuscate: false` if you deliberately want the original source served.
+Use `/scripts` to see each hub's protection status (`source-v1` or `none`).
+
+For a previously uploaded script, run `/protect` with its script ID. Existing
+keys and the loader continue to work; pending one-use download grants are
+cancelled. Running `/protect` again on an already protected script is rejected.
+Existing database rows migrate automatically to `none`, so the update does not
+silently alter old scripts. No new environment variables or secret changes are
+needed. Keep your original source file separately; uploaded protected hubs store
+the transformed script, not a recoverable copy of the original variable names
+and comments.
+
+The static protector parses the file without executing it on the host. It
+renames bound locals and explicit parameters while preserving captured variables,
+shadowed declarations, member names, globals and implicit method `self`. It
+preserves original expression/operator tokens, so indexed compound assignments
+are not expanded into duplicate evaluations. Strings are replaced with byte
+escapes; there is no base64 loader or whole-file encoding wrapper.
+
+The current target is Roblox Luau's untyped Lua-style subset, including
+`continue`, compound assignments, binary literals and generalized iteration.
+**Type annotations, type declarations/assertions, backtick interpolation,
+Luau if-expressions and goto/labels are unsupported.** Known name-dependent
+debugger operations are rejected; dynamically looking up locals by name or
+depending on original source/line numbers is incompatible. Unsupported files
+fail explicitly and do not create or replace a stored hub. Parsing has a
+200,000-token limit; protected output is capped at 8 MB. Different Lua dialects
+can disagree on edge cases such as bare carriage returns inside long strings;
+the encoder follows Luau behavior.
+
+This protection makes casual reading harder. Variable names and strings can
+still be recovered with analysis, and globals/member names remain recognizable.
+It is not comparable to a dedicated VM obfuscator and cannot prevent an
+authorized client from saving code.
 
 Scripts are encrypted in storage. An accepted key produces a device-bound,
 single-use download grant that expires after 60 seconds. The server checks key
@@ -103,17 +148,19 @@ python -m bastion
 
 The application does not automatically load `.env` files. The health endpoint is
 `GET /health`; it exposes only the service name, version and online status.
-Tests require no Discord token or external API:
+Install `requirements-dev.txt` for tests. Tests require no Discord token or
+external application API:
 
 ```sh
+python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
 
 ## Practical limits
 
-- This is an access-management service, **not a VM obfuscator**. Encryption at
-  rest and an authenticated loader do not make client-side Lua impossible to
-  copy. No fake obfuscation stage is included.
+- This is an access-management service with a **source obfuscator**, not a VM
+  obfuscator. Encryption at rest, source transforms and an authenticated loader
+  do not make client-side Lua impossible to copy.
 - Device binding uses the client's reported ID. It is not an unspoofable hardware
   identity or verified Discord/Roblox account identity.
 - Revocation blocks future authentication and downloads. It does not terminate
@@ -138,6 +185,14 @@ Tests cover private Discord command/button access, encrypted storage, raw-key
 non-retention, expiry, device binding/reset, revocation, cross-script denial,
 one-use grants, replay rejection, request size limits, rate limiting, persistence,
 and the complete HTTP loader/authentication/download flow.
+
+Obfuscation tests compare original and protected program results under Lua 5.1
+and official Luau 0.743, including closures, shadowed locals, recursion, methods,
+multi-return/varargs, string bytes and indexed compound assignments. Set
+`LUAU_BIN` to your local official Luau interpreter to enable native Luau tests;
+CI installs the pinned official release and runs them. The parser is adapted
+from the user's A3K Deobfuscator scope parser, with a separate source-preserving
+transformation pass.
 
 The generated Lua is checked for syntax separately in the development workspace.
 Live Discord login, host deployment, real Roblox GUI rendering and actual device
