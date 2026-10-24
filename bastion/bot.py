@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 
 import discord
 from discord import app_commands
@@ -7,7 +8,7 @@ from discord import app_commands
 from . import VERSION
 from .loader import short_loader
 from .store import AccessDenied
-from .obfuscate import protect
+from .jobs import INPUT_TIMEOUT, ProtectionJobs
 from .inputs import read_source
 
 BRAND = 0x34D399
@@ -108,6 +109,7 @@ class Bastion(discord.Client):
             raise ValueError("A valid OWNER_ID is required. Access never defaults to everyone.")
         super().__init__(intents=discord.Intents.none(), allowed_mentions=discord.AllowedMentions.none())
         self.owner_id, self.store, self.base_url, self.guild_id = owner_id, store, base_url, guild_id
+        self.protection_jobs = ProtectionJobs()
         self.tree = OwnerTree(self)
         self._commands()
 
@@ -135,9 +137,9 @@ class Bastion(discord.Client):
         async def upload(interaction: discord.Interaction, name: str, file: discord.Attachment | None = None, obfuscate: bool = True, url: str | None = None, code: str | None = None):
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
-                source = await read_source(file=file,url=url,code=code)
+                source = await asyncio.wait_for(read_source(file=file,url=url,code=code), INPUT_TIMEOUT)
                 if obfuscate:
-                    result = await asyncio.to_thread(protect, source)
+                    result = await self.protection_jobs.run(source)
                     script_id = self.store.upload(name, result.source, protection=result.protection, original_size=result.original_size)
                     detail = f"Source obfuscation enabled: {result.renamed} locals renamed, {result.encoded_strings} strings encoded."
                 else:
@@ -152,7 +154,8 @@ class Bastion(discord.Client):
         @app_commands.describe(file="Script attachment (.lua, .luau, .txt or another text filename)",url="Public script link or standalone loadstring/HttpGet loader",code="Paste the Lua/Luau source directly")
         async def obfuscate_file(interaction: discord.Interaction, file: discord.Attachment | None = None, url: str | None = None, code: str | None = None):
             await interaction.response.defer(ephemeral=True, thinking=True)
-            result = await asyncio.to_thread(protect, await read_source(file=file,url=url,code=code))
+            source = await asyncio.wait_for(read_source(file=file,url=url,code=code), INPUT_TIMEOUT)
+            result = await self.protection_jobs.run(source)
             await interaction.followup.send(
                 content=f"Source obfuscation complete: {result.renamed} locals renamed; {result.encoded_strings} strings encoded. This is source protection, not a VM.",
                 file=discord.File(io.BytesIO(result.source),filename="bastion-protected.lua"),ephemeral=True)
@@ -161,7 +164,7 @@ class Bastion(discord.Client):
         async def protect_existing(interaction: discord.Interaction, script_id: str):
             await interaction.response.defer(ephemeral=True, thinking=True)
             source = self.store.source_for_protection(script_id)
-            result = await asyncio.to_thread(protect, source)
+            result = await self.protection_jobs.run(source)
             self.store.apply_protection(script_id,result)
             await interaction.followup.send("Source obfuscation enabled. Your script ID, loader and issued keys stay the same. Pending downloads were cancelled; run the loader again.",ephemeral=True)
 
@@ -219,8 +222,13 @@ class Bastion(discord.Client):
         @self.tree.error
         async def on_error(interaction, error):
             cause = getattr(error, "original", error)
-            text = str(cause) if isinstance(cause, (ValueError, AccessDenied)) else "The command could not finish. Check the host configuration and try again."
+            if isinstance(cause, TimeoutError):
+                text = "The script download timed out. Try attaching the file or using a direct raw link."
+            else:
+                if not isinstance(cause, (ValueError, AccessDenied)):
+                    logging.getLogger(__name__).error("Discord command failed", exc_info=(type(cause), cause, cause.__traceback__))
+                text = str(cause) if isinstance(cause, (ValueError, AccessDenied)) else "The command could not finish. Check Railway deployment logs and try again."
             if interaction.response.is_done():
-                await interaction.followup.send(text, ephemeral=True)
+                await interaction.edit_original_response(content=text)
             else:
                 await interaction.response.send_message(text, ephemeral=True)

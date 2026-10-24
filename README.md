@@ -92,6 +92,13 @@ decoded with the same size limit. Every redirect and DNS answer is checked for
 private/local network targets, and connections use the checked DNS addresses.
 Proxy environment variables are not used for these downloads.
 
+Downloads stop after 25 seconds, including attachment reads. Obfuscation runs
+in a disposable subprocess with a 30-second deadline and a 384 MB memory limit
+on Linux. A timed-out worker is killed; later jobs can still run. One protection
+job runs at a time. Errors replace the deferred Discord response instead of
+leaving it on “thinking.” Uploaded Lua is never executed by these workers, and
+they do not inherit the bot token or master secret.
+
 These input choices do not expand the obfuscator's supported language syntax.
 
 The static protector parses the file without executing it on the host. It

@@ -1,7 +1,7 @@
 {
   "name": "A3K Bastion",
-  "version": "1.2.0",
-  "offline_tests": 71,
+  "version": "1.2.1",
+  "offline_tests": 76,
   "offline_result": "passed",
   "generated_lua_compile_checks": 4,
   "discord_access": "exact configured OWNER_ID on commands and buttons",
@@ -20,5 +20,7 @@
     "pasted source",
     "standalone literal HttpGet/loadstring snippets"
   ],
-  "local_public_fetch": "Direct outbound access blocked in development workspace; CI includes a real public GitHub download check. See workflow result."
+  "local_public_fetch": "Direct outbound access blocked in development workspace; CI includes a real public GitHub download check. See workflow result.",
+  "worker_limits": "30-second deadline, 384 MB Linux address-space limit, single concurrent protection job",
+  "failure_recovery": "worker timeout/cancellation cleanup, next-job recovery, deferred Discord error response and input deadline tested"
 }
