@@ -31,8 +31,8 @@ For a private workspace, invite the bot only to your own server.
 | Command | What it does |
 | --- | --- |
 | `/panel` | Private control panel with buttons |
-| `/upload name file obfuscate` | Add a UTF-8 .lua or .luau script, up to 1 MB; obfuscation defaults to true |
-| `/obfuscate file` | Privately download an obfuscated copy without creating a hub |
+| `/upload name file/url/code obfuscate` | Add source from one attachment, public link or pasted code; obfuscation defaults to true |
+| `/obfuscate file/url/code` | Privately download an obfuscated copy from one of those input sources |
 | `/protect script_id` | Obfuscate an existing raw hub without changing its ID, loader or keys |
 | `/scripts` | List script IDs and status |
 | `/customize script_id name accent` | Set the hub name and hex accent color |
@@ -51,7 +51,7 @@ key cannot be recovered: revoke its key ID and issue another.
 
 ## Obfuscation
 
-After deploying this update, use `/obfuscate` with an attachment to get a
+After deploying this update, use `/obfuscate` with a source input to get a
 `bastion-protected.lua` file. `/upload` automatically obfuscates new scripts;
 select `obfuscate: false` if you deliberately want the original source served.
 Use `/scripts` to see each hub's protection status (`source-v1` or `none`).
@@ -64,6 +64,35 @@ silently alter old scripts. No new environment variables or secret changes are
 needed. Keep your original source file separately; uploaded protected hubs store
 the transformed script, not a recoverable copy of the original variable names
 and comments.
+
+### Files, links and pasted code
+
+For `/upload` or `/obfuscate`, choose **exactly one** option:
+
+- `file`: attach UTF-8 script text, including `.lua`, `.luau`, `.txt`, or another
+  text filename. Content is checked rather than requiring a particular extension.
+- `url`: provide a public HTTP/HTTPS raw script link. Standard GitHub `blob`
+  links, simple GitHub Gist links, and Pastebin/Pastefy paste-page links are
+  converted to raw endpoints automatically. Direct CDN/download links do not
+  need a filename extension.
+- `code`: paste the source directly. Lua/Luau fenced code blocks are accepted.
+
+A standalone `loadstring(game:HttpGet("https://…"))()` snippet can be supplied as
+`url` or `code`, or inside a text attachment. Its literal public URL is fetched
+without executing the loader. Up to three standalone loader stages and five
+HTTP redirects per stage are supported within a shared 20-second download
+deadline. Mixed programs, computed URLs and authenticated key flows are not
+executed or bypassed; ordinary Lua around a loader is retained as source.
+
+Input source has a 1 MB limit. Links must be publicly reachable without account
+cookies or credentials. HTML pages, archives, PDFs, binary files and invalid text
+are rejected. Links to login pages or unsupported sharing sites require their
+raw/download URL or an attached source file. Compressed HTTP responses are
+decoded with the same size limit. Every redirect and DNS answer is checked for
+private/local network targets, and connections use the checked DNS addresses.
+Proxy environment variables are not used for these downloads.
+
+These input choices do not expand the obfuscator's supported language syntax.
 
 The static protector parses the file without executing it on the host. It
 renames bound locals and explicit parameters while preserving captured variables,
@@ -185,6 +214,10 @@ Tests cover private Discord command/button access, encrypted storage, raw-key
 non-retention, expiry, device binding/reset, revocation, cross-script denial,
 one-use grants, replay rejection, request size limits, rate limiting, persistence,
 and the complete HTTP loader/authentication/download flow.
+
+Input tests cover attachments, pasted code, raw-link conversion, static loader
+snippets, redirects, pinned DNS checks, private-address rejection,
+compressed-response size limits, and command integration.
 
 Obfuscation tests compare original and protected program results under Lua 5.1
 and official Luau 0.743, including closures, shadowed locals, recursion, methods,

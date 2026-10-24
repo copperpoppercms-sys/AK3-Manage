@@ -18,3 +18,14 @@ jobs:
       - run: python -m unittest discover -s tests -v
         env:
           LUAU_BIN: ${{ runner.temp }}/luau/luau
+      - name: Check a real public GitHub script link
+        run: |
+          python - <<'PY'
+          import asyncio
+          from bastion.inputs import fetch_script
+          async def main():
+              data = await fetch_script('https://github.com/luau-lang/luau/blob/0.743/tests/conformance/basic.luau')
+              assert len(data) > 1000 and b'local' in data
+              print('Public script link downloaded:', len(data), 'bytes')
+          asyncio.run(main())
+          PY

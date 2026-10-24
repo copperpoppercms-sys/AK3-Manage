@@ -1,7 +1,7 @@
 {
   "name": "A3K Bastion",
-  "version": "1.1.0",
-  "offline_tests": 53,
+  "version": "1.2.0",
+  "offline_tests": 71,
   "offline_result": "passed",
   "generated_lua_compile_checks": 4,
   "discord_access": "exact configured OWNER_ID on commands and buttons",
@@ -13,5 +13,12 @@
   "source_obfuscation": "source-v1",
   "native_luau_version": "0.743",
   "native_luau_behavior_comparison": "passed",
-  "native_roblox_test_script_compile": "passed"
+  "native_roblox_test_script_compile": "passed",
+  "input_formats": [
+    "UTF-8 attachments",
+    "public HTTP/HTTPS script links",
+    "pasted source",
+    "standalone literal HttpGet/loadstring snippets"
+  ],
+  "local_public_fetch": "Direct outbound access blocked in development workspace; CI includes a real public GitHub download check. See workflow result."
 }
